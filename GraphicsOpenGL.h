@@ -45,6 +45,7 @@ namespace Jarvis
 
     void                beginGBufferPass(shared_ptr<View> view);
     void                drawMesh(shared_ptr<View> view, shared_ptr<Mesh>, shared_ptr<Material>);
+    void                drawVolume(shared_ptr<View> view, shared_ptr<Volume>, shared_ptr<Material>);
     void                compute(shared_ptr<View> view);
     void                trace(shared_ptr<View> view);
     void                endGBufferPass(shared_ptr<View> view);

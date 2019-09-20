@@ -511,6 +511,53 @@ namespace Jarvis
     m_graphicsCommandList->DrawIndexedInstanced((uint32_t)meshData->m_numIndeces, 1, (uint32_t)meshData->m_indexStart, (int)meshData->m_vertexStart, 0);
   }
 
+  void GraphicsDX12::drawVolume(shared_ptr<View> view, shared_ptr<Volume> volume, shared_ptr<Material> material)
+  {
+    Dx12VolumeData* volumeData = (Dx12VolumeData*)volume->getGraphicsData();
+    Dx12MaterialData* materialData = (Dx12MaterialData*)material->getGraphicsData();
+
+
+    m_graphicsCommandList->SetGraphicsRootSignature(m_volumeRootSignature.Get());
+    m_graphicsCommandList->SetPipelineState(m_volumePso.Get());
+
+    uint32_t objCBByteSize = m_frameData[m_frameIndex]->m_objectData->m_size;
+    uint32_t matCBByteSize = m_frameData[m_frameIndex]->m_materialData->m_size;
+
+    ComPtr<ID3D12Resource> objectCB = m_frameData[m_frameIndex]->m_objectData->m_buffer;
+    ComPtr<ID3D12Resource> matCB = m_frameData[m_frameIndex]->m_materialData->m_buffer;
+    ComPtr<ID3D12Resource> frameCB = m_frameData[m_frameIndex]->m_frameData->m_buffer;
+
+    D3D12_VERTEX_BUFFER_VIEW vbv;
+    vbv.BufferLocation = m_volVertexBuffer->GetGPUVirtualAddress();
+    vbv.StrideInBytes = sizeof(Vertex4);
+    vbv.SizeInBytes = (uint32_t)(volumeData->m_numVertices * sizeof(Vertex4));
+    m_graphicsCommandList->IASetVertexBuffers(0, 1, &vbv);
+
+    D3D12_INDEX_BUFFER_VIEW ibv;
+    ibv.BufferLocation = m_volIndexBuffer->GetGPUVirtualAddress();
+    ibv.Format = DXGI_FORMAT_R16_UINT;
+    ibv.SizeInBytes = (uint32_t)(volumeData->m_numIndeces * sizeof(uint16_t));
+    m_graphicsCommandList->IASetIndexBuffer(&ibv);
+
+    m_graphicsCommandList->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    ID3D12DescriptorHeap* ppHeaps[] = { m_srvHeap.Get() };
+    m_graphicsCommandList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+
+    CD3DX12_GPU_DESCRIPTOR_HANDLE tex(m_srvHeap->GetGPUDescriptorHandleForHeapStart());
+    tex.Offset(materialData->m_heapStartIndex, m_cbvSrvDescriptorSize);
+
+    D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + (m_numMeshes+volumeData->m_volumeIndex)*objCBByteSize;
+    D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + materialData->m_materialIndex*matCBByteSize;
+
+    m_graphicsCommandList->SetGraphicsRootDescriptorTable(0, tex);
+    m_graphicsCommandList->SetGraphicsRootConstantBufferView(1, objCBAddress);
+    m_graphicsCommandList->SetGraphicsRootConstantBufferView(2, matCBAddress);
+    m_graphicsCommandList->SetGraphicsRootConstantBufferView(3, frameCB->GetGPUVirtualAddress());
+
+    m_graphicsCommandList->DrawIndexedInstanced((uint32_t)volumeData->m_numIndeces, 1, (uint32_t)volumeData->m_indexStart, (int)volumeData->m_vertexStart, 0);
+  }
+
   void GraphicsDX12::compute(shared_ptr<View> view)
   {
   }
@@ -584,6 +631,19 @@ namespace Jarvis
     m_graphicsCommandList->SetGraphicsRootConstantBufferView(3, frameCB->GetGPUVirtualAddress());
 
     m_graphicsCommandList->DrawInstanced(4, 1, 0, 0);
+
+    CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHeapHandle(
+      m_swapchainBufferRTVHeap->GetCPUDescriptorHandleForHeapStart(),
+      m_frameIndex * 4,
+      m_rtvDescriptorSize);
+
+    CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHeapHandle(
+      m_swapchainBufferDSVHeap->GetCPUDescriptorHandleForHeapStart(),
+      m_frameIndex,
+      m_dsvDescriptorSize);
+
+    // Specify the buffers we are going to render to.
+    m_graphicsCommandList->OMSetRenderTargets(3, &rtvHeapHandle, true, &dsvHeapHandle);
   }
 
   void GraphicsDX12::endFrame(shared_ptr<View> view)
@@ -644,48 +704,61 @@ namespace Jarvis
     m_numMeshes = 0;
     m_numVerts = 0;
     m_numIndeces = 0;
+    m_numVolumes = 0;
+    m_numVolumeVerts = 0;
+    m_numVolumeIndeces = 0;
 
     for (size_t i = 0; i < renderables.size(); ++i)
     {
       for (size_t j = 0; j < renderables[i]->numGeometries(); ++j)
       {
         shared_ptr<Geometry> geometry = renderables[i]->getGeometry(j);
+        shared_ptr<Material> material = geometry->getMaterial();
+        int materialIndex = 0;
+        for (; materialIndex < m_materials.size(); materialIndex++)
+        {
+          if (material == m_materials[materialIndex])
+          {
+            break;
+          }
+        }
+        if (materialIndex == m_materials.size())
+        {
+          m_materials.emplace_back(material);
+          if (material->getAlbedoTexture() != nullptr)
+          {
+            m_numTextures++;
+          }
+
+          shared_ptr<Texture> normal = material->getNormalTexture();
+          if (material->getNormalTexture() != nullptr)
+          {
+            m_numTextures++;
+          }
+
+          shared_ptr<Texture> roughness = material->getMetallicRoughnessTexture();
+          if (material->getMetallicRoughnessTexture() != nullptr)
+          {
+            m_numTextures++;
+          }
+        }
+
         if (geometry->getGeometryType() == Geometry::GEOMETRY_MESH)
         {
           shared_ptr<Mesh> mesh = std::static_pointer_cast<Mesh>(geometry);
           m_numMeshes++;
           m_numVerts += mesh->getNumVerts();
           m_numIndeces += mesh->getIndexBufferSize();
+        }
+        else if (geometry->getGeometryType() == Geometry::GEOMETRY_VOLUME)
+        {
+          shared_ptr<Volume> volume = std::static_pointer_cast<Volume>(geometry);
+          uint32_t texDims[3];
+          volume->getDimensions(texDims);
 
-          shared_ptr<Material> material = mesh->getMaterial();
-          int materialIndex = 0;
-          for (; materialIndex < m_materials.size(); materialIndex++)
-          {
-            if (material == m_materials[materialIndex])
-            {
-              break;
-            }
-          }
-          if (materialIndex == m_materials.size())
-          {
-            m_materials.emplace_back(material);
-            if (material->getAlbedoTexture() != nullptr)
-            {
-              m_numTextures++;
-            }
-
-            shared_ptr<Texture> normal = material->getNormalTexture();
-            if (material->getNormalTexture() != nullptr)
-            {
-              m_numTextures++;
-            }
-
-            shared_ptr<Texture> roughness = material->getMetallicRoughnessTexture();
-            if (material->getMetallicRoughnessTexture() != nullptr)
-            {
-              m_numTextures++;
-            }
-          }
+          m_numVolumeVerts += ((texDims[0] + texDims[1] + texDims[2]) * 4);
+          m_numVolumeIndeces += ((texDims[0] + texDims[1] + texDims[2]) * 6);
+          m_numVolumes++;
         }
       }
     }
@@ -694,6 +767,9 @@ namespace Jarvis
     void* vertexData = malloc(m_numVerts * sizeof(Vertex4));
     uint16_t* indexData = (uint16_t*)malloc(m_numIndeces * sizeof(uint16_t));
 
+    void* volVertexData = malloc(m_numVolumeVerts * sizeof(Vertex4));
+    uint16_t* volIndexData = (uint16_t*)malloc(m_numVolumeIndeces * sizeof(uint16_t));
+
     float* meshVertexData[5];
     uint32_t* meshIndexData;
 
@@ -701,6 +777,11 @@ namespace Jarvis
     uint16_t* iptr = indexData;
     size_t vertexStart = 0;
     size_t indexStart = 0;
+
+    Vertex4* volV4ptr = (Vertex4*)volVertexData;
+    uint16_t* volIptr = volIndexData;
+    size_t volVertexStart = 0;
+    size_t volIndexStart = 0;
 
     for (size_t i = 0; i < renderables.size(); ++i)
     {
@@ -732,6 +813,7 @@ namespace Jarvis
             {
               v4ptr->texCoord.x = meshVertexData[2][k * 2 + 0];
               v4ptr->texCoord.y = meshVertexData[2][k * 2 + 1];
+              v4ptr->texCoord.z = 0.0f;
               v4ptr->tangent.x = meshVertexData[3][k * 3 + 0];
               v4ptr->tangent.y = meshVertexData[3][k * 3 + 1];
               v4ptr->tangent.z = meshVertexData[3][k * 3 + 2];
@@ -756,6 +838,154 @@ namespace Jarvis
 
           vertexStart += numVerts;
           indexStart += numIndeces;
+        }
+        else if (geometry->getGeometryType() == Geometry::GEOMETRY_VOLUME)
+        {
+          shared_ptr<Volume> volume = std::static_pointer_cast<Volume>(geometry);
+          Dx12VolumeData* volumeData = new Dx12VolumeData();
+
+          uint32_t texDims[3];
+          double spacing[3];
+          volume->getDimensions(texDims);
+          volume->getSpacing(spacing);
+          unsigned short* scalars = volume->getImageData();
+          uint32_t width = texDims[0];
+          uint32_t height = texDims[1];
+          uint32_t depth = texDims[2];
+
+          //float* vdata = (float*)malloc((width + height + depth) * 12 * sizeof(float));
+          //float* tdata = (float*)malloc((width + height + depth) * 12 * sizeof(float));
+          //uint32_t* idata = (uint32_t*)malloc((width + height + depth) * 6 * sizeof(uint32_t));
+
+          extractMesh(scalars, texDims, spacing, volV4ptr, volIptr);
+
+          //float bounds[6];
+          //volume->getBounds(bounds);
+          //float xmin = bounds[0];
+          //float xmax = bounds[1];          
+          //float ymin = bounds[2];
+          //float ymax = bounds[3];          
+          //float zmin = bounds[4];
+          //float zmax = bounds[5];
+
+          //volV4ptr->position.x = xmin;
+          //volV4ptr->position.y = ymin;
+          //volV4ptr->position.z = zmin;
+          //volV4ptr->texCoord.x = 0.0f;
+          //volV4ptr->texCoord.y = 0.0f;
+          //volV4ptr->texCoord.z = 0.0f;
+          //volV4ptr++;
+
+          //volV4ptr->position.x = xmax;
+          //volV4ptr->position.y = ymin;
+          //volV4ptr->position.z = zmin;
+          //volV4ptr->texCoord.x = 1.0f;
+          //volV4ptr->texCoord.y = 0.0f;
+          //volV4ptr->texCoord.z = 0.0f;
+          //volV4ptr++;
+
+          //volV4ptr->position.x = xmax;
+          //volV4ptr->position.y = ymax;
+          //volV4ptr->position.z = zmin;
+          //volV4ptr->texCoord.x = 1.0f;
+          //volV4ptr->texCoord.y = 1.0f;
+          //volV4ptr->texCoord.z = 0.0f;
+          //volV4ptr++;
+
+          //volV4ptr->position.x = xmin;
+          //volV4ptr->position.y = ymax;
+          //volV4ptr->position.z = zmin;
+          //volV4ptr->texCoord.x = 0.0f;
+          //volV4ptr->texCoord.y = 1.0f;
+          //volV4ptr->texCoord.z = 0.0f;
+          //volV4ptr++;
+
+          //volV4ptr->position.x = xmin;
+          //volV4ptr->position.y = ymin;
+          //volV4ptr->position.z = zmax;
+          //volV4ptr->texCoord.x = 0.0f;
+          //volV4ptr->texCoord.y = 0.0f;
+          //volV4ptr->texCoord.z = 1.0f;
+          //volV4ptr++;
+
+          //volV4ptr->position.x = xmax;
+          //volV4ptr->position.y = ymin;
+          //volV4ptr->position.z = zmax;
+          //volV4ptr->texCoord.x = 1.0f;
+          //volV4ptr->texCoord.y = 0.0f;
+          //volV4ptr->texCoord.z = 1.0f;
+          //volV4ptr++;
+
+          //volV4ptr->position.x = xmax;
+          //volV4ptr->position.y = ymax;
+          //volV4ptr->position.z = zmax;
+          //volV4ptr->texCoord.x = 1.0f;
+          //volV4ptr->texCoord.y = 1.0f;
+          //volV4ptr->texCoord.z = 1.0f;
+          //volV4ptr++;
+
+          //volV4ptr->position.x = xmin;
+          //volV4ptr->position.y = ymax;
+          //volV4ptr->position.z = zmax;
+          //volV4ptr->texCoord.x = 0.0f;
+          //volV4ptr->texCoord.y = 1.0f;
+          //volV4ptr->texCoord.z = 1.0f;
+          //volV4ptr++;
+
+          //volIptr[0] = 0;
+          //volIptr[1] = 1;
+          //volIptr[2] = 2;
+          //volIptr[3] = 0;
+          //volIptr[4] = 2;
+          //volIptr[5] = 3;
+
+          //volIptr[6] = 1;
+          //volIptr[7] = 5;
+          //volIptr[8] = 6;
+          //volIptr[9] = 1;
+          //volIptr[10] = 6;
+          //volIptr[11] = 2;
+
+          //volIptr[12] = 5;
+          //volIptr[13] = 4;
+          //volIptr[14] = 7;
+          //volIptr[15] = 5;
+          //volIptr[16] = 7;
+          //volIptr[17] = 6;
+
+          //volIptr[18] = 4;
+          //volIptr[19] = 0;
+          //volIptr[20] = 3;
+          //volIptr[21] = 4;
+          //volIptr[22] = 3;
+          //volIptr[23] = 7;
+
+          //volIptr[24] = 4;
+          //volIptr[25] = 5;
+          //volIptr[26] = 1;
+          //volIptr[27] = 4;
+          //volIptr[28] = 1;
+          //volIptr[29] = 0;
+
+          //volIptr[30] = 3;
+          //volIptr[31] = 2;
+          //volIptr[32] = 6;
+          //volIptr[33] = 3;
+          //volIptr[34] = 6;
+          //volIptr[35] = 7;
+
+          //volIptr += 36;
+
+          volumeData->m_numIndeces = width + height + depth;
+          volumeData->m_numVertices = (width + height + depth) * 6;
+          volumeData->m_vertexStart = volVertexStart;
+          volumeData->m_indexStart = volIndexStart;
+          volumeData->m_volumeIndex = m_volumeIndex++;
+          volume->setGraphicsData(volumeData);
+          volume->setDirty(false);
+
+          volVertexStart += volumeData->m_numVertices;
+          volIndexStart += volumeData->m_numIndeces;
         }
       }
     }
@@ -785,6 +1015,13 @@ namespace Jarvis
 
     m_vertexBuffer = createAndUploadBuffer((uint32_t)(m_numVerts * sizeof(Vertex4)), vertexData, D3D12_HEAP_TYPE_DEFAULT, vUploadBuffer);
     m_indexBuffer = createAndUploadBuffer((uint32_t)(m_numIndeces * sizeof(uint16_t)), indexData, D3D12_HEAP_TYPE_DEFAULT, iUploadBuffer);
+
+
+    ComPtr<ID3D12Resource> vVolUploadBuffer;
+    ComPtr<ID3D12Resource> iVolUploadBuffer;
+
+    m_volVertexBuffer = createAndUploadBuffer((uint32_t)(m_numVolumeVerts * sizeof(Vertex4)), volVertexData, D3D12_HEAP_TYPE_DEFAULT, vVolUploadBuffer);
+    m_volIndexBuffer = createAndUploadBuffer((uint32_t)(m_numVolumeIndeces * sizeof(uint16_t)), volIndexData, D3D12_HEAP_TYPE_DEFAULT, iVolUploadBuffer);
 
     // Create the full screen quad
     ScreenQuadVertex QuadVerts[] =
@@ -868,10 +1105,26 @@ namespace Jarvis
     linearWrap.RegisterSpace = 0;
     linearWrap.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
+    D3D12_STATIC_SAMPLER_DESC volumeSampler = {};
+    volumeSampler.Filter = D3D12_FILTER_MIN_MAG_POINT_MIP_LINEAR;
+    volumeSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    volumeSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    volumeSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    volumeSampler.MipLODBias = 0;
+    volumeSampler.MaxAnisotropy = 0;
+    volumeSampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+    volumeSampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+    volumeSampler.MinLOD = 0.0f;
+    volumeSampler.MaxLOD = D3D12_FLOAT32_MAX;
+    volumeSampler.ShaderRegister = 4;
+    volumeSampler.RegisterSpace = 0;
+    volumeSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
     m_samplers[0] = pointClamp;
     m_samplers[1] = pointWrap;
     m_samplers[2] = linearClamp;
     m_samplers[3] = linearWrap;
+    m_samplers[4] = volumeSampler;
   }
 
   void GraphicsDX12::createRootSignatures()
@@ -923,7 +1176,7 @@ namespace Jarvis
       slotRootParameter[3].InitAsConstantBufferView(2);
 
       // A root signature is an array of root parameters.
-      CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter, 4, m_samplers.data(), D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+      CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter, 5, m_samplers.data(), D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
       // create a root signature with a single slot which points to a descriptor range consisting of a single constant buffer
       ComPtr<ID3DBlob> serializedRootSig = nullptr;
@@ -960,7 +1213,7 @@ namespace Jarvis
     slotRootParameter[3].InitAsConstantBufferView(2);
 
     // A root signature is an array of root parameters.
-    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter, 4, m_samplers.data(), D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter, 5, m_samplers.data(), D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
     // create a root signature with a single slot which points to a descriptor range consisting of a single constant buffer
     ComPtr<ID3DBlob> serializedRootSig = nullptr;
@@ -978,6 +1231,42 @@ namespace Jarvis
       serializedRootSig->GetBufferPointer(),
       serializedRootSig->GetBufferSize(),
       IID_PPV_ARGS(m_lightPassRootSignature.GetAddressOf()));
+
+    // Create the Volume Root Signature
+    CD3DX12_DESCRIPTOR_RANGE texTableVolume;
+    texTableVolume.Init(
+      D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+      2,  // number of descriptors
+      0); // register t0
+
+    // Root parameter can be a table, root descriptor or root constants.
+    CD3DX12_ROOT_PARAMETER slotRootParameterVol[4];
+
+    // Create root CBV.
+    slotRootParameterVol[0].InitAsDescriptorTable(1, &texTableVolume, D3D12_SHADER_VISIBILITY_PIXEL);
+    slotRootParameterVol[1].InitAsConstantBufferView(0);
+    slotRootParameterVol[2].InitAsConstantBufferView(1);
+    slotRootParameterVol[3].InitAsConstantBufferView(2);
+
+    // A root signature is an array of root parameters.
+    CD3DX12_ROOT_SIGNATURE_DESC rootSigDescVol(4, slotRootParameterVol, 5, m_samplers.data(), D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+    // create a root signature with a single slot which points to a descriptor range consisting of a single constant buffer
+    ComPtr<ID3DBlob> serializedRootSigVol = nullptr;
+    ComPtr<ID3DBlob> errorBlobVol = nullptr;
+    hr = D3D12SerializeRootSignature(&rootSigDescVol, D3D_ROOT_SIGNATURE_VERSION_1,
+      serializedRootSigVol.GetAddressOf(), errorBlobVol.GetAddressOf());
+
+    if (errorBlobVol != nullptr)
+    {
+      ::OutputDebugStringA((char*)errorBlobVol->GetBufferPointer());
+    }
+
+    hr = m_device->CreateRootSignature(
+      0,
+      serializedRootSigVol->GetBufferPointer(),
+      serializedRootSigVol->GetBufferSize(),
+      IID_PPV_ARGS(m_volumeRootSignature.GetAddressOf()));
   }
 
   void GraphicsDX12::createInputLayouts()
@@ -986,32 +1275,32 @@ namespace Jarvis
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 
     m_inputLayouts[1] =
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 
     m_inputLayouts[2] =
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 
     m_inputLayouts[3] =
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 36, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 
     m_inputLayoutLightPass =
@@ -1033,8 +1322,6 @@ namespace Jarvis
     srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     hr = m_device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&m_srvHeap));
-
-
   }
 
   void GraphicsDX12::createShaders()
@@ -1068,6 +1355,11 @@ namespace Jarvis
     psName = L"Shaders\\Line.hlsl";
     m_lineShader.m_vsByteCode = loadShader(vsName, nullptr, "VS", "vs_5_0");
     m_lineShader.m_psByteCode = loadShader(psName, nullptr, "PS", "ps_5_0");
+
+    vsName = L"Shaders\\Volume.hlsl";
+    psName = L"Shaders\\Volume.hlsl";
+    m_volumeShader.m_vsByteCode = loadShader(vsName, nullptr, "VS", "vs_5_0");
+    m_volumeShader.m_psByteCode = loadShader(psName, nullptr, "PS", "ps_5_0");
   }
 
   void GraphicsDX12::createPipelines()
@@ -1172,6 +1464,38 @@ namespace Jarvis
     psoDesc.SampleDesc.Quality = 0;
     psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     hr = m_device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_lightPassPso));
+
+    // Create the volume pso
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC volumePsoDesc;
+    ZeroMemory(&volumePsoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
+    volumePsoDesc.InputLayout = { m_inputLayouts[0].data(), (UINT)m_inputLayouts[0].size() };
+    volumePsoDesc.pRootSignature = m_volumeRootSignature.Get();
+    volumePsoDesc.VS =
+    {
+      reinterpret_cast<BYTE*>(m_volumeShader.m_vsByteCode->GetBufferPointer()),
+      m_volumeShader.m_vsByteCode->GetBufferSize()
+    };
+    volumePsoDesc.PS =
+    {
+      reinterpret_cast<BYTE*>(m_volumeShader.m_psByteCode->GetBufferPointer()),
+      m_volumeShader.m_psByteCode->GetBufferSize()
+    };
+
+    rdesc = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    rdesc.CullMode = D3D12_CULL_MODE_NONE;
+    volumePsoDesc.RasterizerState = rdesc;
+    //volumePsoDesc.RasterizerState.DepthClipEnable = false;
+    volumePsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+    volumePsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+    //volumePsoDesc.DepthStencilState.DepthEnable = false;
+    volumePsoDesc.SampleMask = UINT_MAX;
+    volumePsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    volumePsoDesc.NumRenderTargets = 1;
+    volumePsoDesc.RTVFormats[0] = m_swapChainFormat;
+    volumePsoDesc.SampleDesc.Count = 1;
+    volumePsoDesc.SampleDesc.Quality = 0;
+    volumePsoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    hr = m_device->CreateGraphicsPipelineState(&volumePsoDesc, IID_PPV_ARGS(&m_volumePso));
   }
 
   void GraphicsDX12::createConstantBuffers()
@@ -1213,7 +1537,7 @@ namespace Jarvis
       m_device->CreateCommittedResource(
         &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
         D3D12_HEAP_FLAG_NONE,
-        &CD3DX12_RESOURCE_DESC::Buffer(m_frameData[i]->m_objectData->m_size*m_numMeshes),
+        &CD3DX12_RESOURCE_DESC::Buffer(m_frameData[i]->m_objectData->m_size*(m_numMeshes+m_numVolumes)),
         D3D12_RESOURCE_STATE_GENERIC_READ,
         nullptr,
         IID_PPV_ARGS(&m_frameData[i]->m_objectData->m_buffer));
@@ -1308,6 +1632,11 @@ namespace Jarvis
     XMStoreFloat4x4(&currentFrameConstants.m_invProjection, XMMatrixTranspose(invProj));
     XMStoreFloat4x4(&currentFrameConstants.m_viewProjection, XMMatrixTranspose(viewProj));
     XMStoreFloat4x4(&currentFrameConstants.m_invViewProjection, XMMatrixTranspose(invViewProj));
+    XMStoreFloat4x4(&currentFrameConstants.m_invViewProjection, DirectX::XMMatrixIdentity());
+
+    currentFrameConstants.m_invViewProjection._11 = 1.0f / 238.0f;
+    currentFrameConstants.m_invViewProjection._22 = 1.0f / 238.0f;
+    currentFrameConstants.m_invViewProjection._33 = 1.0f / 101.0f;
 
     currentFrameConstants.m_eyePosition = { viewm.r->m128_f32[12], viewm.r->m128_f32[13], viewm.r->m128_f32[14] };
     currentFrameConstants.m_renderTargetSize = { (float)1200, (float)800 };
@@ -1379,13 +1708,37 @@ namespace Jarvis
       shared_ptr<Entity> entity = renderables[i]->getEntity(0);
       glm::mat4 transform;
       entity->getCompositeTransform(transform);
+      glm::mat4 invTransform = glm::inverse(transform);
       ObjectConstants objConstants;
       objConstants.m_worldTransform = ConvertTransform(transform);
+      objConstants.m_modelTransform = ConvertTransform(invTransform);
 
       for (uint32_t j = 0; j < renderables[i]->numGeometries(); ++j)
       {
         shared_ptr<Geometry> geometry = renderables[i]->getGeometry(j);
         if (geometry->getGeometryType() == Geometry::GEOMETRY_MESH)
+        {
+          void* dst = m_frameData[m_frameIndex]->m_objectData->m_data + meshIndex * m_frameData[m_frameIndex]->m_objectData->m_size;
+          CopyData(dst, &objConstants, sizeof(objConstants));
+          meshIndex++;
+        }
+      }
+    }
+
+    for (uint32_t i = 0; i < renderables.size(); ++i)
+    {
+      shared_ptr<Entity> entity = renderables[i]->getEntity(0);
+      glm::mat4 transform;
+      entity->getCompositeTransform(transform);
+      glm::mat4 invTransform = glm::inverse(transform);
+      ObjectConstants objConstants;
+      objConstants.m_worldTransform = ConvertTransform(transform);
+      objConstants.m_modelTransform = ConvertTransform(invTransform);
+
+      for (uint32_t j = 0; j < renderables[i]->numGeometries(); ++j)
+      {
+        shared_ptr<Geometry> geometry = renderables[i]->getGeometry(j);
+        if (geometry->getGeometryType() == Geometry::GEOMETRY_VOLUME)
         {
           void* dst = m_frameData[m_frameIndex]->m_objectData->m_data + meshIndex * m_frameData[m_frameIndex]->m_objectData->m_size;
           CopyData(dst, &objConstants, sizeof(objConstants));
@@ -1418,14 +1771,25 @@ namespace Jarvis
         loadTexture(albedo, &materialData->m_albedoTexture);
 
         materialData->m_heapStartIndex = m_heapIndex;
-
+        m_heapIndex++;
         texture = materialData->m_albedoTexture.m_texture;
         srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         srvDesc.Format = texture->GetDesc().Format;
-        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-        srvDesc.Texture2D.MostDetailedMip = 0;
-        srvDesc.Texture2D.MipLevels = texture->GetDesc().MipLevels;
-        srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+        if (albedo->getFormat() == Texture::FORMAT_VOLUME)
+        {
+          srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+          srvDesc.Texture3D.MipLevels = 1;
+          srvDesc.Texture3D.MostDetailedMip = 0;
+          srvDesc.Texture3D.ResourceMinLODClamp = 0.0f;
+        }     
+        else
+        {
+          srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+          srvDesc.Texture2D.MostDetailedMip = 0;
+          srvDesc.Texture2D.MipLevels = texture->GetDesc().MipLevels;
+          srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+        }
+
         m_device->CreateShaderResourceView(texture.Get(), &srvDesc, hDescriptor);
         numTextures++;
       }
@@ -1483,6 +1847,7 @@ namespace Jarvis
     // Describe and create a Texture2D.
     D3D12_RESOURCE_DESC textureDesc = {};
     ZeroMemory(&textureDesc, sizeof(D3D12_RESOURCE_DESC));
+
     textureDesc.MipLevels = 1;
     textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     textureDesc.Width = texture->getWidth();
@@ -1493,6 +1858,13 @@ namespace Jarvis
     textureDesc.SampleDesc.Count = 1;
     textureDesc.SampleDesc.Quality = 0;
     textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+
+    if (texture->getFormat() == Texture::FORMAT_VOLUME)
+    {
+      textureDesc.Format = DXGI_FORMAT_R16_SNORM;
+      textureDesc.DepthOrArraySize = (uint16_t)texture->getDepth();
+      textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE3D;
+    }
 
     m_device->CreateCommittedResource(
       &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
@@ -1516,6 +1888,10 @@ namespace Jarvis
     D3D12_SUBRESOURCE_DATA tData = {};
     tData.pData = texture->getData();
     tData.RowPitch = texture->getWidth() * 4;
+    if (texture->getFormat() == Texture::FORMAT_VOLUME)
+    {
+      tData.RowPitch = texture->getWidth() * sizeof (unsigned short);
+    }
     tData.SlicePitch = tData.RowPitch * texture->getHeight();
 
     hr = m_graphicsCommandList->Reset(m_graphicsCommandAllocator.Get(), nullptr);
@@ -1873,5 +2249,254 @@ namespace Jarvis
     outMat.m[3][3] = transpose[3][3];
 
     return outMat;
+  }
+
+  void GraphicsDX12::extractMesh(unsigned short* scalars, uint32_t* dims, double* spacing, Vertex4* vdata, uint16_t* idata)
+  {
+    struct Vertex {
+      float x;
+      float y;
+      float z;
+      float s;
+      float t;
+      float r;
+    };
+
+    Vertex v1, v2, v3, v4;
+    uint32_t width = dims[0];
+    uint32_t height = dims[1];
+    uint32_t depth = dims[2];
+
+    uint32_t vindex = 0;
+
+    float tcinc = 1.0f / (float)depth;
+
+    // Z Axis Slices
+    v1.x = -(width * 0.5f * (float)spacing[0]);
+    v1.y = height * 0.5f * (float)spacing[1];
+    v1.z = 0.0f;
+    v1.s = 0.0f;
+    v1.t = 1.0f;
+    v1.r = 0.0f;
+
+    v2.x = (width * 0.5f * (float)spacing[0]);
+    v2.y = height * 0.5f * (float)spacing[1];
+    v2.z = 0.0f;
+    v2.s = 1.0f;
+    v2.t = 1.0f;
+    v2.r = 0.0f;
+
+    v3.x = (width * 0.5f * (float)spacing[0]);
+    v3.y = -(height * 0.5f * (float)spacing[1]);
+    v3.z = 0.0f;
+    v3.s = 1.0f;
+    v3.t = 0.0f;
+    v3.r = 0.0f;
+
+    v4.x = -(width * 0.5f * (float)spacing[0]);
+    v4.y = -(height * 0.5f * (float)spacing[1]);
+    v4.z = 0.0f;
+    v4.s = 0.0f;
+    v4.t = 0.0f;
+    v4.r = 0.0f;
+
+    for (uint32_t d = 0; d < depth; d++)
+    {
+      vdata[vindex].position.x = v1.x;
+      vdata[vindex].position.y = v1.y;
+      vdata[vindex].position.z = v1.z;
+      vdata[vindex].texCoord.x = v1.s;
+      vdata[vindex].texCoord.y = v1.t;
+      vdata[vindex++].texCoord.z = v1.r;
+
+      vdata[vindex].position.x = v2.x;
+      vdata[vindex].position.y = v2.y;
+      vdata[vindex].position.z = v2.z;
+      vdata[vindex].texCoord.x = v2.s;
+      vdata[vindex].texCoord.y = v2.t;
+      vdata[vindex++].texCoord.z = v2.r;
+
+      vdata[vindex].position.x = v3.x;
+      vdata[vindex].position.y = v3.y;
+      vdata[vindex].position.z = v3.z;
+      vdata[vindex].texCoord.x = v3.s;
+      vdata[vindex].texCoord.y = v3.t;
+      vdata[vindex++].texCoord.z = v3.r;
+
+      vdata[vindex].position.x = v4.x;
+      vdata[vindex].position.y = v4.y;
+      vdata[vindex].position.z = v4.z;
+      vdata[vindex].texCoord.x = v4.s;
+      vdata[vindex].texCoord.y = v4.t;
+      vdata[vindex++].texCoord.z = v4.r;
+
+      v1.z -= (float)spacing[2];
+      v1.r += tcinc;
+      v2.z -= (float)spacing[2];
+      v2.r += tcinc;
+      v3.z -= (float)spacing[2];
+      v3.r += tcinc;
+      v4.z -= (float)spacing[2];
+      v4.r += tcinc;
+    }
+
+    // X Axis Slices
+    tcinc = 1.0f / (float)width;
+
+    v1.x = (width * 0.5f * (float)spacing[0]);
+    v1.y = height * 0.5f * (float)spacing[1];
+    v1.z = 0.0f;
+    v1.s = 1.0f;
+    v1.t = 1.0f;
+    v1.r = 0.0f;
+
+    v2.x = (width * 0.5f * (float)spacing[0]);
+    v2.y = height * 0.5f * (float)spacing[1];
+    v2.z = -(depth * (float)spacing[2]);
+    v2.s = 1.0f;
+    v2.t = 1.0f;
+    v2.r = 1.0f;
+
+    v3.x = (width * 0.5f * (float)spacing[0]);
+    v3.y = -(height * 0.5f * (float)spacing[1]);
+    v3.z = -(depth * (float)spacing[2]);
+    v3.s = 1.0f;
+    v3.t = 0.0f;
+    v3.r = 1.0f;
+
+    v4.x = (width * 0.5f * (float)spacing[0]);
+    v4.y = -(height * 0.5f * (float)spacing[1]);
+    v4.z = 0.0f;
+    v4.s = 1.0f;
+    v4.t = 0.0f;
+    v4.r = 0.0f;
+
+    for (uint32_t w = 0; w < width; w++)
+    {
+      vdata[vindex].position.x = v1.x;
+      vdata[vindex].position.y = v1.y;
+      vdata[vindex].position.z = v1.z;
+      vdata[vindex].texCoord.x = v1.s;
+      vdata[vindex].texCoord.y = v1.t;
+      vdata[vindex++].texCoord.z = v1.r;
+
+      vdata[vindex].position.x = v2.x;
+      vdata[vindex].position.y = v2.y;
+      vdata[vindex].position.z = v2.z;
+      vdata[vindex].texCoord.x = v2.s;
+      vdata[vindex].texCoord.y = v2.t;
+      vdata[vindex++].texCoord.z = v2.r;
+
+      vdata[vindex].position.x = v3.x;
+      vdata[vindex].position.y = v3.y;
+      vdata[vindex].position.z = v3.z;
+      vdata[vindex].texCoord.x = v3.s;
+      vdata[vindex].texCoord.y = v3.t;
+      vdata[vindex++].texCoord.z = v3.r;
+
+      vdata[vindex].position.x = v4.x;
+      vdata[vindex].position.y = v4.y;
+      vdata[vindex].position.z = v4.z;
+      vdata[vindex].texCoord.x = v4.s;
+      vdata[vindex].texCoord.y = v4.t;
+      vdata[vindex++].texCoord.z = v4.r;
+
+      v1.x -= (float)spacing[0];
+      v1.s -= tcinc;
+      v2.x -= (float)spacing[0];
+      v2.s -= tcinc;
+      v3.x -= (float)spacing[0];
+      v3.s -= tcinc;
+      v4.x -= (float)spacing[0];
+      v4.s -= tcinc;
+    }
+
+
+    // Y Axis Slices
+    tcinc = 1.0f / (float)height;
+
+    v1.x = -(width * 0.5f * (float)spacing[0]);
+    v1.y = height * 0.5f * (float)spacing[1];
+    v1.z = -(depth * (float)spacing[2]);
+    v1.s = 0.0f;
+    v1.t = 1.0f;
+    v1.r = 1.0f;
+
+    v2.x = (width * 0.5f * (float)spacing[0]);
+    v2.y = height * 0.5f * (float)spacing[1];
+    v2.z = -(depth * (float)spacing[2]);
+    v2.s = 1.0f;
+    v2.t = 1.0f;
+    v2.r = 1.0f;
+
+    v3.x = (width * 0.5f * (float)spacing[0]);
+    v3.y = (height * 0.5f * (float)spacing[1]);
+    v3.z = 0.0f;
+    v3.s = 1.0f;
+    v3.t = 1.0f;
+    v3.r = 0.0f;
+
+    v4.x = -(width * 0.5f * (float)spacing[0]);
+    v4.y = (height * 0.5f * (float)spacing[1]);
+    v4.z = 0.0f;
+    v4.s = 0.0f;
+    v4.t = 1.0f;
+    v4.r = 0.0f;
+
+    for (uint32_t h = 0; h < height; h++)
+    {
+      vdata[vindex].position.x = v1.x;
+      vdata[vindex].position.y = v1.y;
+      vdata[vindex].position.z = v1.z;
+      vdata[vindex].texCoord.x = v1.s;
+      vdata[vindex].texCoord.y = v1.t;
+      vdata[vindex++].texCoord.z = v1.r;
+
+      vdata[vindex].position.x = v2.x;
+      vdata[vindex].position.y = v2.y;
+      vdata[vindex].position.z = v2.z;
+      vdata[vindex].texCoord.x = v2.s;
+      vdata[vindex].texCoord.y = v2.t;
+      vdata[vindex++].texCoord.z = v2.r;
+
+      vdata[vindex].position.x = v3.x;
+      vdata[vindex].position.y = v3.y;
+      vdata[vindex].position.z = v3.z;
+      vdata[vindex].texCoord.x = v3.s;
+      vdata[vindex].texCoord.y = v3.t;
+      vdata[vindex++].texCoord.z = v3.r;
+
+      vdata[vindex].position.x = v4.x;
+      vdata[vindex].position.y = v4.y;
+      vdata[vindex].position.z = v4.z;
+      vdata[vindex].texCoord.x = v4.s;
+      vdata[vindex].texCoord.y = v4.t;
+      vdata[vindex++].texCoord.z = v4.r;
+
+      v1.y -= (float)spacing[1];
+      v1.t -= tcinc;
+      v2.y -= (float)spacing[1];
+      v2.t -= tcinc;
+      v3.y -= (float)spacing[1];
+      v3.t -= tcinc;
+      v4.y -= (float)spacing[1];
+      v4.t -= tcinc;
+    }
+
+    uint32_t iindex = 0;
+    vindex = 0;
+
+    for (uint32_t i = 0; i < (width + height + depth); i++)
+    {
+      idata[iindex] = vindex;
+      idata[iindex + 1] = vindex + 2;
+      idata[iindex + 2] = vindex + 1;
+
+      idata[iindex + 3] = vindex;
+      idata[iindex + 4] = vindex + 3;
+      idata[iindex + 5] = vindex + 2;
+      iindex += 6;
+      vindex += 4;
+    }
   }
 }

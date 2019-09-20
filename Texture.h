@@ -8,7 +8,14 @@ namespace Jarvis
   class Texture
   {
   public:
-    Texture(string name, size_t width, size_t height, size_t depth, size_t bitsPerPixel, size_t size, int format);
+    enum Format
+    {
+      FORMAT_2D,
+      FORMAT_3D,
+      FORMAT_VOLUME
+    };
+
+    Texture(string name, size_t width, size_t height, size_t depth, size_t bitsPerPixel, size_t size, Format format);
     ~Texture();
 
     string          getName();
@@ -17,7 +24,7 @@ namespace Jarvis
     size_t          getDepth();
     size_t          getBitsPerPixel();
     size_t          getSize();
-    int             getFormat();
+    Format          getFormat();
     void            setData(unsigned char* data);
     unsigned char * getData();
     void            setGraphicsData(void * graphicsData);
@@ -30,7 +37,7 @@ namespace Jarvis
     size_t          m_depth;
     size_t          m_bitsPerPixel;
     size_t          m_size;
-    int             m_format;
+    Format          m_format;
     unsigned char*  m_data;
     void*           m_graphicsData;
   };

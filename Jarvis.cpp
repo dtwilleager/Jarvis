@@ -13,6 +13,25 @@
 #include "TranslationProcessor.h"
 #include "RenderScreenView.h"
 
+#include "vtkBoxWidget.h"
+#include "vtkCamera.h"
+#include "vtkCommand.h"
+#include "vtkColorTransferFunction.h"
+#include "vtkDICOMImageReader.h"
+#include "vtkImageData.h"
+#include "vtkImageResample.h"
+#include "vtkMetaImageReader.h"
+#include "vtkPiecewiseFunction.h"
+#include "vtkPlanes.h"
+#include "vtkProperty.h"
+#include "vtkRenderer.h"
+#include "vtkRenderWindow.h"
+#include "vtkRenderWindowInteractor.h"
+#include "vtkVolume.h"
+#include "vtkVolumeProperty.h"
+#include "vtkXMLImageDataReader.h"
+#include "vtkOpenGLGPUVolumeRayCastMapper.h"
+
 #include <memory>
 #include <array>
 
@@ -169,6 +188,35 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
    //mat4 gltfcale = glm::scale(mat4(), vec3(0.3f, 0.3f, 0.3f));
    //gltfModel->setTransform(gltfcale);
    //rootEntity->addChild(gltfModel);
+
+   vtkDICOMImageReader *dicomReader = vtkDICOMImageReader::New();
+   dicomReader->SetDirectoryName("C:\\code\\_ChickenWing-Small");
+   dicomReader->Update();
+   vtkImageData* input = dicomReader->GetOutput();
+   vtkAlgorithm* reader = dicomReader;
+   vtkRenderer* renderer = vtkRenderer::New();
+   vtkOpenGLGPUVolumeRayCastMapper *mapper = vtkOpenGLGPUVolumeRayCastMapper::New();
+   mapper->SetInputConnection(reader->GetOutputPort());
+   vtkVolume* volume = vtkVolume::New();
+   volume->SetMapper(mapper);
+   renderer->AddVolume(volume);
+
+   vec3 yAxis(0.0f, 1.0f, 0.0f);
+   shared_ptr<Jarvis::Entity> translateE = make_shared<Jarvis::Entity>("Light 1");
+   mat4 vtkTranslate = glm::translate(mat4(), vec3(0.f, 10.0f, 0.0f));
+   translateE->setTransform(vtkTranslate);
+
+   shared_ptr<Jarvis::Entity> rotateE = make_shared<Jarvis::Entity>("Light 1");
+   shared_ptr<Jarvis::Entity> vtkModel = g_worldManager->loadVtkObjects(renderer);
+   mat4 vtkScale = glm::scale(mat4(), vec3(0.1f, 0.1f, 0.1f));
+   vtkModel->setTransform(vtkScale);
+
+   translateE->addChild(rotateE);
+   rotateE->addChild(vtkModel);
+
+   shared_ptr<Jarvis::RotationProcessor> volumeProcessor = make_shared<Jarvis::RotationProcessor>("Volume Processor", rotateE, yAxis, 0.1f);
+   rotateE->addComponent(volumeProcessor);
+   rootEntity->addChild(translateE);
 
    shared_ptr<Jarvis::Entity> sponzaModel = g_worldManager->loadAssimpModel("models/sponzaPBR/sponza.obj");
    //shared_ptr<Jarvis::Entity> sponzaModel = g_worldManager->loadAssimpModel("models/bistro/Bistro_Research_Interior.fbx");

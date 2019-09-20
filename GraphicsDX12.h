@@ -2,6 +2,7 @@
 #pragma once
 #include "Graphics.h"
 #include "Mesh.h"
+#include "Volume.h"
 #include "Material.h"
 
 #include <string>
@@ -60,6 +61,7 @@ namespace Jarvis
 
     void                beginGBufferPass(shared_ptr<View> view);
     void                drawMesh(shared_ptr<View> view, shared_ptr<Mesh>, shared_ptr<Material>);
+    void                drawVolume(shared_ptr<View> view, shared_ptr<Volume>, shared_ptr<Material>);
     void                compute(shared_ptr<View> view);
     void                trace(shared_ptr<View> view);
     void                endGBufferPass(shared_ptr<View> view);
@@ -116,7 +118,7 @@ namespace Jarvis
     {
       DirectX::XMFLOAT3 position;
       DirectX::XMFLOAT3 normal;
-      DirectX::XMFLOAT2 texCoord;
+      DirectX::XMFLOAT3 texCoord;
       DirectX::XMFLOAT3 tangent;
     };
 
@@ -143,6 +145,17 @@ namespace Jarvis
       uint32_t m_materialIndex;
       uint32_t m_meshIndex;
 
+    };
+
+    // Per volume graphics data
+    struct Dx12VolumeData
+    {
+      size_t m_vertexStart;
+      size_t m_numVertices;
+      size_t m_indexStart;
+      size_t m_numIndeces;
+      uint32_t m_materialIndex;
+      uint32_t m_volumeIndex;
     };
 
     // Per texture graphics data
@@ -250,6 +263,7 @@ namespace Jarvis
     struct ObjectConstants
     {
       DirectX::XMFLOAT4X4 m_worldTransform = Identity4x4();
+      DirectX::XMFLOAT4X4 m_modelTransform = Identity4x4();
     };
 
     struct ConstantBuffer
@@ -276,6 +290,7 @@ namespace Jarvis
     };
 
     void loadTexture(shared_ptr<Texture> texture, Dx12Texture* textureData);
+    void extractMesh(unsigned short* scalars, uint32_t* dims, double* spacing, Vertex4* vdata, uint16_t* idata);
 
     uint32_t  m_frameIndex;
     HINSTANCE m_hinstance;
@@ -314,7 +329,9 @@ namespace Jarvis
     ComPtr<ID3D12GraphicsCommandList>   m_resourceCommandList;
 
     ComPtr<ID3D12Resource>              m_vertexBuffer;
-    ComPtr<ID3D12Resource>              m_indexBuffer;
+    ComPtr<ID3D12Resource>              m_indexBuffer;    
+    ComPtr<ID3D12Resource>              m_volVertexBuffer;
+    ComPtr<ID3D12Resource>              m_volIndexBuffer;
     ComPtr<ID3D12Resource>              m_vertexBufferFSQ;
 
     map<std::wstring, ComPtr<ID3DBlob>>  m_vsMap;
@@ -325,11 +342,15 @@ namespace Jarvis
     size_t                               m_numVerts = 0;
     size_t                               m_numIndeces = 0;
     uint32_t                             m_numTextures = 0;
+    uint32_t                             m_numVolumes = 0;
+    uint32_t                             m_numVolumeVerts = 0;
+    uint32_t                             m_numVolumeIndeces = 0;
     uint32_t                             m_meshIndex = 0;
+    uint32_t                             m_volumeIndex = 0;
     uint32_t                             m_materialIndex = 0;
     uint32_t                             m_heapIndex = 0;
 
-    std::array<D3D12_STATIC_SAMPLER_DESC, 4>   m_samplers;
+    std::array<D3D12_STATIC_SAMPLER_DESC, 5>   m_samplers;
     std::array<ComPtr<ID3D12RootSignature>, 4> m_rootSignatures;
     std::array<vector<D3D12_INPUT_ELEMENT_DESC>, 4> m_inputLayouts;
     std::array<Dx12ShaderData, 4>        m_shaders;
@@ -340,6 +361,10 @@ namespace Jarvis
     ComPtr<ID3D12DescriptorHeap>         m_srvHeapLightPass;
     ComPtr<ID3D12DescriptorHeap>         m_srvHeap;
     uint32_t                             m_cbvSrvDescriptorSize;
+
+    ComPtr<ID3D12RootSignature>          m_volumeRootSignature;
+    Dx12ShaderData                       m_volumeShader;
+    ComPtr <ID3D12PipelineState>         m_volumePso;
 
     std::array < ComPtr<ID3D12PipelineState>, 4> m_psos;
     ComPtr <ID3D12PipelineState>         m_lightPassPso;

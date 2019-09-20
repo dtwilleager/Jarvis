@@ -51,13 +51,14 @@ cbuffer cbPerMaterial : register(b1)
 cbuffer cbPerObject : register(b0)
 {
 	float4x4 gWorld; 
+  float4x4 gModel;
 };
 
 struct VertexIn
 {
 	float3 Pos    : POSITION;
   float3 Normal : NORMAL;
-  float2 TexC   : TEXCOORD;
+  float3 TexC   : TEXCOORD;
   float3 Tangent: TANGENT;
 };
 
@@ -65,7 +66,7 @@ struct VertexOut
 {
 	float4 Pos      : SV_POSITION;
   float3 WPos     : POSITION;
-  float2 TexC     : TEXCOORD;
+  float3 TexC     : TEXCOORD;
   float3 Normal   : NORMAL;
   float3 Tangent  : TANGENT;
   float3 Binormal : BINORMAL;
@@ -98,13 +99,13 @@ PsOutput PS(VertexOut pin)
 {
   PsOutput output;
 
-  float4 albedo = g_albedotexture.Sample(g_linearWrapSampler, pin.TexC);
+  float4 albedo = g_albedotexture.Sample(g_linearWrapSampler, pin.TexC.xy);
 
   if (albedo.a < 1.0)
     discard;
 
-  float3 normalSample = g_normaltexture.Sample(g_linearWrapSampler, pin.TexC).xyz;
-  float roughness = g_roughnesstexture.Sample(g_linearWrapSampler, pin.TexC).x;
+  float3 normalSample = g_normaltexture.Sample(g_linearWrapSampler, pin.TexC.xy).xyz;
+  float roughness = g_roughnesstexture.Sample(g_linearWrapSampler, pin.TexC.xy).x;
 
   normalSample = normalize((normalSample * 2.0f) - 1.0f);
   float3x3 TBN = float3x3(normalize(pin.Tangent), normalize(pin.Binormal), normalize(pin.Normal));

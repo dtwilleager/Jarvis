@@ -33,7 +33,8 @@ namespace Jarvis
       SHADOW_CUBE,
       DEFERRED_COMPOSITE,
       DEFERRED_LIT,
-	    DEPTH_PREPASS
+	    DEPTH_PREPASS,
+      VOLUME
     };
 
     Material(string name, Type type);

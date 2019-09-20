@@ -48,13 +48,14 @@ cbuffer cbPerMaterial : register(b1)
 cbuffer cbPerObject : register(b0)
 {
   float4x4 gWorld;
+  float4x4 gModel;
 };
 
 struct VertexIn
 {
   float3 Pos    : POSITION;
   float3 Normal : NORMAL;
-  float2 TexC   : TEXCOORD;
+  float3 TexC   : TEXCOORD;
   float3 Tangent: TANGENT;
 };
 

@@ -20,6 +20,7 @@ namespace Jarvis
   class Mesh;
   class View;
   class Material;
+  class Volume;
 
   class Graphics
   {
@@ -36,6 +37,7 @@ namespace Jarvis
 
     virtual void                beginGBufferPass(shared_ptr<View> view);
     virtual void                drawMesh(shared_ptr<View> view, shared_ptr<Mesh>, shared_ptr<Material>);
+    virtual void                drawVolume(shared_ptr<View> view, shared_ptr<Volume>, shared_ptr<Material>);
     virtual void                compute(shared_ptr<View> view);
     virtual void                trace(shared_ptr<View> view);
     virtual void                endGBufferPass(shared_ptr<View> view);

@@ -386,7 +386,7 @@ namespace Jarvis
       }
 
       texture = make_shared<Texture>(filename, ilGetInteger(IL_IMAGE_WIDTH), ilGetInteger(IL_IMAGE_HEIGHT), ilGetInteger(IL_IMAGE_DEPTH),
-        ilGetInteger(IL_IMAGE_BYTES_PER_PIXEL), ilGetInteger(IL_IMAGE_SIZE_OF_DATA), ilGetInteger(IL_IMAGE_FORMAT));
+        ilGetInteger(IL_IMAGE_BYTES_PER_PIXEL), ilGetInteger(IL_IMAGE_SIZE_OF_DATA), Texture::FORMAT_2D);
       texture->setData(ilGetData());
 
       m_textureMap[filename] = texture;

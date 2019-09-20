@@ -42,6 +42,10 @@ namespace Jarvis
   {
   }
 
+  void Graphics::drawVolume(shared_ptr<View> view, shared_ptr<Volume>, shared_ptr<Material> material)
+  {
+  }
+
   void Graphics::compute(shared_ptr<View> view)
   {
   }

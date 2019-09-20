@@ -83,6 +83,10 @@ set (SOURCE_FILES
   TranslationProcessor.h
   View.cpp
   View.h
+  Volume.cpp
+  Volume.h
+  VtkLoader.cpp
+  VtkLoader.h
   WorldManager.cpp
   WorldManager.h
   Jarvis.rc

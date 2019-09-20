@@ -23,6 +23,7 @@ namespace Jarvis {
     m_renderTechnique = make_shared<RenderTechnique>("Default Render Technique", this, hinstance, window, m_graphics);
 
     m_modelLoader = make_shared<ModelLoader>();
+    m_vtkLoader = make_shared<VtkLoader>();
 
     m_frameCount = 0;
     m_totalProcessTime = 0;
@@ -56,7 +57,6 @@ namespace Jarvis {
     currentTime = m_timer.elapsedMicro();
     processTime = currentTime - m_frameStartTime;
 
-    m_renderTechnique->update();
     m_renderTechnique->render();
 
     renderTime = m_timer.elapsedMicro() - currentTime;
@@ -291,6 +291,11 @@ namespace Jarvis {
   shared_ptr<Entity> WorldManager::loadAssimpModel(string filename)
   {
     return m_modelLoader->loadAssimpModel(filename);
+  }
+
+  shared_ptr<Entity> WorldManager::loadVtkObjects(vtkRenderer* renderer)
+  {
+    return m_vtkLoader->loadVtkObjects(renderer);
   }
 
   void WorldManager::printLog(string s)

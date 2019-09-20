@@ -3,7 +3,7 @@
 
 namespace Jarvis
 {
-  Texture::Texture(string name, size_t width, size_t height, size_t depth, size_t bitsPerPixel, size_t size, int format) :
+  Texture::Texture(string name, size_t width, size_t height, size_t depth, size_t bitsPerPixel, size_t size, Format format) :
     m_name(name),
     m_width(width),
     m_height(height),
@@ -55,7 +55,7 @@ namespace Jarvis
     return m_size;
   }
 
-  int Texture::getFormat()
+  Texture::Format Texture::getFormat()
   {
     return m_format;
   }

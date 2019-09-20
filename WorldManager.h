@@ -12,6 +12,7 @@
 #include "Graphics.h"
 #include "CpuTimer.h"
 #include "ModelLoader.h"
+#include "VtkLoader.h"
 
 #include <string>
 #include <vector>
@@ -27,6 +28,8 @@ using std::string;
 using std::vector;
 using std::shared_ptr;
 using std::map;
+
+class vtkRenderer;
 
 namespace Jarvis
 {
@@ -55,6 +58,7 @@ namespace Jarvis
     void                handleMouse(MSG* event);
 
     shared_ptr<Entity>  loadAssimpModel(string filename);
+    shared_ptr<Entity>  loadVtkObjects(vtkRenderer* renderer);
 
     void                buildFrame();
     void                executeFrame();
@@ -72,6 +76,7 @@ namespace Jarvis
     shared_ptr<Graphics>                      m_graphics;
     shared_ptr<RenderTechnique>               m_renderTechnique;
     shared_ptr<ModelLoader>                   m_modelLoader;
+    shared_ptr<VtkLoader>                     m_vtkLoader;
     CpuTimer                                  m_timer;
     unsigned long long                        m_frameStartTime;
     unsigned long long                        m_lastFrameStartTime;

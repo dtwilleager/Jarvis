@@ -72,6 +72,7 @@ namespace Jarvis
     float updatePlaneD(vec4 plane, vec3 p);
     bool intersectsCluster(uint32_t clusterIndex, vec3 lightViewPosition, float radius);
     void renderMeshes(shared_ptr<View> view);
+    void renderVolumes(shared_ptr<View> view);
 
     struct LightData
     {

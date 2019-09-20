@@ -105,6 +105,11 @@ namespace Jarvis
     }
   }
 
+
+  void GraphicsOpenGL::drawVolume(shared_ptr<View> view, shared_ptr<Volume>, shared_ptr<Material> material)
+  {
+  }
+
   void GraphicsOpenGL::compute(shared_ptr<View> view)
   {
   }

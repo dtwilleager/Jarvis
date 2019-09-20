@@ -324,12 +324,16 @@ namespace Jarvis
   {
     m_graphics->beginFrame(m_onscreenView);
 
+    update();
+
     m_graphics->beginGBufferPass(m_onscreenView);
     renderMeshes(m_onscreenView);
     m_graphics->endGBufferPass(m_onscreenView);
 
     m_graphics->beginLightingPass(m_onscreenView);
     m_graphics->endLightingPass(m_onscreenView);
+
+    renderVolumes(m_onscreenView);
 
     m_graphics->endFrame(m_onscreenView);
 
@@ -352,6 +356,24 @@ namespace Jarvis
         {
           shared_ptr<Mesh> mesh = std::static_pointer_cast<Mesh>(geometry);
           m_graphics->drawMesh(view, mesh, mesh->getMaterial());
+        }
+      }
+    }
+  }
+
+  void RenderTechnique::renderVolumes(shared_ptr<View> view)
+  {
+    uint32_t currentMeshIndex = 0;
+    for (size_t i = 0; i < m_renderables.size(); i++)
+    {
+
+      for (size_t j = 0; j < m_renderables[i]->numGeometries(); j++, currentMeshIndex++)
+      {
+        shared_ptr<Geometry> geometry = m_renderables[i]->getGeometry(j);
+        if (geometry->getGeometryType() == Geometry::GEOMETRY_VOLUME)
+        {
+          shared_ptr<Volume> volume = std::static_pointer_cast<Volume>(geometry);
+          m_graphics->drawVolume(view, volume, volume->getMaterial());
         }
       }
     }
